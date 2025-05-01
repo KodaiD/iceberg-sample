@@ -3,6 +3,10 @@ package org.example;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
+import java.net.URI;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,26 +30,41 @@ import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.types.Types;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 public class Main {
+  public static final String MINIO_ENDPOINT = "http://localhost:9000";
+  public static final String MINIO_USER = "minioadmin";
+  public static final String MINIO_PASSWORD = "minioadmin";
+
+  public static final String JDBC_URI = "jdbc:postgresql://localhost:5432/";
+  public static final String JDBC_USER = "postgres";
+  public static final String JDBC_PASSWORD = "postgres";
+
   public static final String NAMESPACE = "ns";
   public static final String TABLE = "test";
 
-  public static void main(String[] args) throws IOException {
+  public static void main(String[] args) throws IOException, SQLException {
+    init();
+
     Map<String, String> properties = new HashMap<>();
     // Common properties
     properties.put(CatalogProperties.CATALOG_IMPL, JdbcCatalog.class.getName());
-    properties.put(CatalogProperties.URI, "jdbc:postgresql://localhost:5432/iceberg_metastore");
+    properties.put(CatalogProperties.URI, JDBC_URI + "iceberg_metastore");
     properties.put(CatalogProperties.WAREHOUSE_LOCATION, "s3a://iceberg-warehouse/warehouse");
     // JDBC-specific properties
-    properties.put(JdbcCatalog.PROPERTY_PREFIX + "user", "postgres");
-    properties.put(JdbcCatalog.PROPERTY_PREFIX + "password", "postgres");
+    properties.put(JdbcCatalog.PROPERTY_PREFIX + "user", JDBC_USER);
+    properties.put(JdbcCatalog.PROPERTY_PREFIX + "password", JDBC_PASSWORD);
     properties.put(JdbcCatalog.PROPERTY_PREFIX + "schema-version", "V2");
 
     Configuration hadoopConf = new Configuration();
-    hadoopConf.set("fs.s3a.endpoint", "http://localhost:9000");
-    hadoopConf.set("fs.s3a.access.key", "minioadmin");
-    hadoopConf.set("fs.s3a.secret.key", "minioadmin");
+    hadoopConf.set("fs.s3a.endpoint", MINIO_ENDPOINT);
+    hadoopConf.set("fs.s3a.access.key", MINIO_USER);
+    hadoopConf.set("fs.s3a.secret.key", MINIO_PASSWORD);
     hadoopConf.set("fs.s3a.path.style.access", "true");
     Catalog catalog = CatalogUtil.buildIcebergCatalog("test_jdbc_catalog", properties, hadoopConf);
 
@@ -112,5 +131,27 @@ public class Main {
 
     // Drop table
     catalog.dropTable(tableIdentifier);
+  }
+
+  private static void init() throws SQLException {
+    S3Client client =
+        S3Client.builder()
+            .credentialsProvider(
+                StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(MINIO_USER, MINIO_PASSWORD)))
+            .region(Region.AP_NORTHEAST_1)
+            .endpointOverride(URI.create(MINIO_ENDPOINT))
+            .forcePathStyle(true)
+            .build();
+    try {
+      client.createBucket(b -> b.bucket("iceberg-warehouse"));
+    } catch (S3Exception e) {
+      if (e.statusCode() != 409) {
+        throw e;
+      }
+    }
+
+    Connection connection = DriverManager.getConnection(JDBC_URI, JDBC_USER, JDBC_PASSWORD);
+    connection.createStatement().execute("CREATE DATABASE iceberg_metastore");
   }
 }
