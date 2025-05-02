@@ -1,17 +1,14 @@
 package org.example;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.net.URI;
-import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.iceberg.AppendFiles;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.DataFile;
@@ -19,6 +16,7 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.Transaction;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -101,15 +99,12 @@ public class Main {
       table = catalog.loadTable(tableIdentifier);
     }
 
-    // Insert records
+    // Insert a record
     GenericRecord record = GenericRecord.create(schema);
-    ImmutableList.Builder<GenericRecord> builder = ImmutableList.builder();
-    builder.add(record.copy(ImmutableMap.of("c1", 1, "c2", 2L, "c3", "aaa")));
-    builder.add(record.copy(ImmutableMap.of("c1", 2, "c2", 3L, "c3", "bbb")));
-    builder.add(record.copy(ImmutableMap.of("c1", 3, "c2", 4L, "c3", "ccc")));
-    ImmutableList<GenericRecord> records = builder.build();
+    record.setField("c1", 1);
+    record.setField("c2", 2L);
+    record.setField("c3", "aaa");
     String filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
-
     OutputFile outputFile = table.io().newOutputFile(filePath);
     DataWriter<GenericRecord> dataWriter =
         Parquet.writeData(outputFile)
@@ -118,12 +113,73 @@ public class Main {
             .overwrite(false)
             .withSpec(PartitionSpec.unpartitioned())
             .build();
-    for (GenericRecord recordToWrite : records) {
-      dataWriter.write(recordToWrite);
-    }
+    dataWriter.write(record);
     dataWriter.close();
     DataFile dataFile = dataWriter.toDataFile();
     table.newAppend().appendFile(dataFile).commit();
+
+    // Insert records
+    Transaction transaction = table.newTransaction();
+    AppendFiles append = transaction.newAppend();
+    GenericRecord record1 = GenericRecord.create(schema);
+    record1.setField("c1", 0);
+    record1.setField("c2", 2L);
+    record1.setField("c3", "aaa");
+    filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
+    outputFile = table.io().newOutputFile(filePath);
+    dataWriter =
+        Parquet.writeData(outputFile)
+            .schema(table.schema())
+            .createWriterFunc(GenericParquetWriter::buildWriter)
+            .overwrite(false)
+            .withSpec(table.spec())
+            .withPartition(GenericRecord.create(table.spec().partitionType()))
+            .build();
+    dataWriter.write(record1);
+    dataWriter.close();
+    dataFile = dataWriter.toDataFile();
+    append.appendFile(dataFile);
+
+    GenericRecord record2 = GenericRecord.create(schema);
+    record2.setField("c1", 2);
+    record2.setField("c2", 2L);
+    record2.setField("c3", "bbb");
+    filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
+    outputFile = table.io().newOutputFile(filePath);
+    dataWriter =
+        Parquet.writeData(outputFile)
+            .schema(table.schema())
+            .createWriterFunc(GenericParquetWriter::buildWriter)
+            .overwrite(false)
+            .withSpec(table.spec())
+            .withPartition(GenericRecord.create(table.spec().partitionType()))
+            .build();
+    dataWriter.write(record2);
+    dataWriter.close();
+    dataFile = dataWriter.toDataFile();
+    append.appendFile(dataFile);
+
+    GenericRecord record3 = GenericRecord.create(schema);
+    record3.setField("c1", 3);
+    record3.setField("c2", 2L);
+    record3.setField("c3", "ccc");
+    filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
+    outputFile = table.io().newOutputFile(filePath);
+    dataWriter =
+        Parquet.writeData(outputFile)
+            .schema(table.schema())
+            .createWriterFunc(GenericParquetWriter::buildWriter)
+            .overwrite(false)
+            .withSpec(table.spec())
+            .withPartition(GenericRecord.create(table.spec().partitionType()))
+            .build();
+    dataWriter.write(record3);
+    dataWriter.close();
+    dataFile = dataWriter.toDataFile();
+    append.appendFile(dataFile);
+
+    append.commit();
+    transaction.commitTransaction();
 
     // List all tables in the namespace
     List<TableIdentifier> tables = catalog.listTables(namespace);
@@ -151,7 +207,7 @@ public class Main {
       }
     }
 
-    Connection connection = DriverManager.getConnection(JDBC_URI, JDBC_USER, JDBC_PASSWORD);
-    connection.createStatement().execute("CREATE DATABASE iceberg_metastore");
+    //    Connection connection = DriverManager.getConnection(JDBC_URI, JDBC_USER, JDBC_PASSWORD);
+    //    connection.createStatement().execute("CREATE DATABASE iceberg_metastore");
   }
 }
