@@ -119,6 +119,7 @@ public class Main {
             .overwrite(false)
             .withSpec(table.spec())
             .withPartition(partitionRecord)
+            .withSortOrder(table.sortOrder())
             .build();
     dataWriter.write(record);
     dataWriter.close();
@@ -143,6 +144,7 @@ public class Main {
             .overwrite(false)
             .withSpec(table.spec())
             .withPartition(partitionRecord)
+            .withSortOrder(table.sortOrder())
             .build();
     dataWriter.write(record1);
     dataWriter.close();
@@ -164,6 +166,7 @@ public class Main {
             .overwrite(false)
             .withSpec(table.spec())
             .withPartition(partitionRecord)
+            .withSortOrder(table.sortOrder())
             .build();
     dataWriter.write(record2);
     dataWriter.close();
@@ -185,6 +188,7 @@ public class Main {
             .overwrite(false)
             .withSpec(table.spec())
             .withPartition(partitionRecord)
+            .withSortOrder(table.sortOrder())
             .build();
     dataWriter.write(record3);
     dataWriter.close();
