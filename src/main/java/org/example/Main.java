@@ -21,8 +21,12 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.data.GenericRecord;
+import org.apache.iceberg.data.IcebergGenerics;
+import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.expressions.Expressions;
+import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.DataWriter;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.jdbc.JdbcCatalog;
@@ -101,17 +105,20 @@ public class Main {
 
     // Insert a record
     GenericRecord record = GenericRecord.create(schema);
-    record.setField("c1", 1);
+    record.setField("c1", 0);
     record.setField("c2", 2L);
     record.setField("c3", "aaa");
     String filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
     OutputFile outputFile = table.io().newOutputFile(filePath);
+    GenericRecord partitionRecord = GenericRecord.create(table.spec().partitionType());
+    partitionRecord.setField("c1", 0);
     DataWriter<GenericRecord> dataWriter =
         Parquet.writeData(outputFile)
             .schema(table.schema())
             .createWriterFunc(GenericParquetWriter::buildWriter)
             .overwrite(false)
-            .withSpec(PartitionSpec.unpartitioned())
+            .withSpec(table.spec())
+            .withPartition(partitionRecord)
             .build();
     dataWriter.write(record);
     dataWriter.close();
@@ -122,18 +129,20 @@ public class Main {
     Transaction transaction = table.newTransaction();
     AppendFiles append = transaction.newAppend();
     GenericRecord record1 = GenericRecord.create(schema);
-    record1.setField("c1", 0);
+    record1.setField("c1", 1);
     record1.setField("c2", 2L);
     record1.setField("c3", "aaa");
     filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
     outputFile = table.io().newOutputFile(filePath);
+    partitionRecord = GenericRecord.create(table.spec().partitionType());
+    partitionRecord.setField("c1", 1);
     dataWriter =
         Parquet.writeData(outputFile)
             .schema(table.schema())
             .createWriterFunc(GenericParquetWriter::buildWriter)
             .overwrite(false)
             .withSpec(table.spec())
-            .withPartition(GenericRecord.create(table.spec().partitionType()))
+            .withPartition(partitionRecord)
             .build();
     dataWriter.write(record1);
     dataWriter.close();
@@ -146,13 +155,15 @@ public class Main {
     record2.setField("c3", "bbb");
     filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
     outputFile = table.io().newOutputFile(filePath);
+    partitionRecord = GenericRecord.create(table.spec().partitionType());
+    partitionRecord.setField("c1", 2);
     dataWriter =
         Parquet.writeData(outputFile)
             .schema(table.schema())
             .createWriterFunc(GenericParquetWriter::buildWriter)
             .overwrite(false)
             .withSpec(table.spec())
-            .withPartition(GenericRecord.create(table.spec().partitionType()))
+            .withPartition(partitionRecord)
             .build();
     dataWriter.write(record2);
     dataWriter.close();
@@ -165,13 +176,15 @@ public class Main {
     record3.setField("c3", "ccc");
     filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
     outputFile = table.io().newOutputFile(filePath);
+    partitionRecord = GenericRecord.create(table.spec().partitionType());
+    partitionRecord.setField("c1", 3);
     dataWriter =
         Parquet.writeData(outputFile)
             .schema(table.schema())
             .createWriterFunc(GenericParquetWriter::buildWriter)
             .overwrite(false)
             .withSpec(table.spec())
-            .withPartition(GenericRecord.create(table.spec().partitionType()))
+            .withPartition(partitionRecord)
             .build();
     dataWriter.write(record3);
     dataWriter.close();
@@ -180,6 +193,13 @@ public class Main {
 
     append.commit();
     transaction.commitTransaction();
+
+    // Read records
+    CloseableIterable<Record> result =
+        IcebergGenerics.read(table).where(Expressions.equal("c1", 1)).build();
+    for (Record r : result) {
+      System.out.println(r);
+    }
 
     // List all tables in the namespace
     List<TableIdentifier> tables = catalog.listTables(namespace);

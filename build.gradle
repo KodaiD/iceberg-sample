@@ -9,8 +9,15 @@ repositories {
     mavenCentral()
 }
 
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(8))
+    }
+}
+
 dependencies {
     implementation("org.apache.iceberg:iceberg-core:1.6.1")
+    implementation("org.apache.iceberg:iceberg-data:1.6.1")
     implementation("org.apache.iceberg:iceberg-parquet:1.6.1")
     implementation("org.apache.parquet:parquet-hadoop:1.15.1")
     implementation("org.postgresql:postgresql:42.7.5")
