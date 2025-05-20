@@ -18,6 +18,7 @@ java {
 ext {
     icebergVersion = '1.6.1'
     parquetVersion = '1.13.1'
+    orcVersion = '1.9.1'
     hadoopVersion = '3.3.4'
     s3Version = '2.21.43'
     postgresVersion = '42.7.5'
@@ -29,9 +30,11 @@ dependencies {
     implementation("org.apache.iceberg:iceberg-core:${icebergVersion}")
     implementation("org.apache.iceberg:iceberg-data:${icebergVersion}")
     implementation("org.apache.iceberg:iceberg-parquet:${icebergVersion}")
+    implementation("org.apache.iceberg:iceberg-orc:${icebergVersion}")
     implementation "org.apache.iceberg:iceberg-aws:${icebergVersion}"
     implementation("org.apache.parquet:parquet-column:${parquetVersion}")
     implementation("org.apache.parquet:parquet-hadoop:${parquetVersion}")
+    implementation("org.apache.orc:orc-core:${orcVersion}")
     implementation("org.apache.hadoop:hadoop-common:${hadoopVersion}")
     implementation("org.apache.hadoop:hadoop-client:${hadoopVersion}")
     implementation("software.amazon.awssdk:s3:${s3Version}")
