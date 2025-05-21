@@ -1,6 +1,5 @@
 package org.example;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.net.URI;
 import java.sql.Connection;
@@ -8,15 +7,11 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
-import org.apache.iceberg.DataFile;
-import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortOrder;
@@ -24,21 +19,10 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.data.GenericRecord;
-import org.apache.iceberg.data.IcebergGenerics;
 import org.apache.iceberg.data.Record;
-import org.apache.iceberg.data.parquet.GenericParquetWriter;
-import org.apache.iceberg.deletes.EqualityDeleteWriter;
-import org.apache.iceberg.encryption.EncryptedFiles;
-import org.apache.iceberg.encryption.EncryptionKeyMetadata;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
-import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.CloseableIterable;
-import org.apache.iceberg.io.DataWriter;
-import org.apache.iceberg.io.FileWriterFactory;
-import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.jdbc.JdbcCatalog;
-import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.types.Types;
 import org.jetbrains.annotations.NotNull;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -76,55 +60,35 @@ public class Main {
 
     Schema schema =
         new Schema(
-            Types.NestedField.required(1, "c1", Types.IntegerType.get()),
-            Types.NestedField.required(2, "c2", Types.LongType.get()),
-            Types.NestedField.optional(3, "c3", Types.StringType.get()));
+            Types.NestedField.required(1, IcebergWrapper.PARTITION_KEY, Types.StringType.get()),
+            Types.NestedField.required(2, IcebergWrapper.CLUSTERING_KEY, Types.StringType.get()),
+            Types.NestedField.optional(3, IcebergWrapper.VALUE, Types.StringType.get()));
     Map<String, String> tableProperties = new HashMap<>();
     tableProperties.put("write.delete.mode", "merge-on-read");
     tableProperties.put("write.update.mode", "merge-on-read");
     tableProperties.put("write.merge.mode", "merge-on-read");
-    PartitionSpec partitionSpec = PartitionSpec.builderFor(schema).identity("c1").build();
-    SortOrder sortOrder = SortOrder.builderFor(schema).asc("c2").build();
+    PartitionSpec partitionSpec =
+        PartitionSpec.builderFor(schema).identity(IcebergWrapper.PARTITION_KEY).build();
+    SortOrder sortOrder = SortOrder.builderFor(schema).asc(IcebergWrapper.CLUSTERING_KEY).build();
     Table table =
         createTableIfNotExists(
             catalog, tableIdentifier, schema, partitionSpec, sortOrder, tableProperties);
 
-    // Insert a record
-    GenericRecord record1 = GenericRecord.create(schema);
-    record1.setField("c1", 0);
-    record1.setField("c2", 2L);
-    record1.setField("c3", "aaa");
-    //    insertRecord(table, record1);
-    // Insert a record
-    GenericRecord record2 = GenericRecord.create(schema);
-    record2.setField("c1", 0);
-    record2.setField("c2", 3L);
-    record2.setField("c3", "aaa");
-    //    insertRecord(table, record2);
-    // Insert a record
-    GenericRecord record3 = GenericRecord.create(schema);
-    record3.setField("c1", 0);
-    record3.setField("c2", 1L);
-    record3.setField("c3", "aaa");
-    //    insertRecord(table, record3);
-
-    // Insert records
-    List<GenericRecord> records = Arrays.asList(record1, record2, record3);
-    insertRecords(table, records);
-
-    // Update a record
-    GenericRecord afterRecord = GenericRecord.create(schema);
-    afterRecord.setField("c1", 0);
-    afterRecord.setField("c2", 2L);
-    afterRecord.setField("c3", "xxx");
-    updateRecord(table, record1, afterRecord);
-
-    // Read records
-    CloseableIterable<Record> result =
-        IcebergGenerics.read(table).where(Expressions.equal("c1", 0)).build();
-    for (Record r : result) {
-      System.out.println(r);
+    IcebergWrapper wrapper = new IcebergWrapper(table);
+    wrapper.insert("000", "111", "aaa");
+    wrapper.insert("000", "222", "aaa");
+    wrapper.insert("000", "333", "aaa");
+    CloseableIterable<Record> iterable1 = wrapper.read("000", "111");
+    if (iterable1.iterator().hasNext()) {
+      System.out.println(iterable1.iterator().next().getField(IcebergWrapper.VALUE));
     }
+    iterable1.close();
+    wrapper.update("000", "111", "xxx");
+    CloseableIterable<Record> iterable2 = wrapper.read("000", "111");
+    if (iterable2.iterator().hasNext()) {
+      System.out.println(iterable2.iterator().next().getField(IcebergWrapper.VALUE));
+    }
+    iterable2.close();
 
     // List all tables in the namespace
     List<TableIdentifier> tables = catalog.listTables(namespace);
@@ -154,99 +118,6 @@ public class Main {
       table = catalog.loadTable(tableId);
     }
     return table;
-  }
-
-  private static void insertRecord(Table table, GenericRecord record) throws IOException {
-    String filePath = table.location() + "/data" + UUID.randomUUID() + ".parquet";
-    OutputFile outputFile = table.io().newOutputFile(filePath);
-    GenericRecord partitionRecord = GenericRecord.create(table.spec().partitionType());
-    partitionRecord.setField("c1", 0);
-    DataWriter<GenericRecord> dataWriter =
-        Parquet.writeData(outputFile)
-            .schema(table.schema())
-            .createWriterFunc(GenericParquetWriter::buildWriter)
-            .overwrite(false)
-            .withSpec(table.spec())
-            .withPartition(partitionRecord)
-            .withSortOrder(table.sortOrder())
-            .build();
-    dataWriter.write(record);
-    dataWriter.close();
-    DataFile dataFile = dataWriter.toDataFile();
-    table.newAppend().appendFile(dataFile).commit();
-  }
-
-  private static void insertRecords(Table table, List<GenericRecord> records) throws IOException {
-    GenericRecord partitionRecord = getPartitionRecord(table, "c1", 0);
-    // Create a data file
-    FileWriterFactory<Record> factoryForDataFile =
-        CustomFileWriterFactory.builderFor(table).build();
-    DataWriter<Record> dataFileWriter =
-        factoryForDataFile.newDataWriter(
-            EncryptedFiles.encryptedOutput(
-                getOutputFile(table, partitionRecord), EncryptionKeyMetadata.EMPTY),
-            table.spec(),
-            partitionRecord);
-    try (Closeable ignored = dataFileWriter) {
-      for (GenericRecord record : records) {
-        dataFileWriter.write(record);
-      }
-    }
-    DataFile dataFile = dataFileWriter.toDataFile();
-    table.newAppend().appendFile(dataFile).commit();
-  }
-
-  private static void updateRecord(
-      Table table, GenericRecord beforeRecord, GenericRecord afterRecord) throws IOException {
-    GenericRecord partitionRecord = getPartitionRecord(table, "c1", 0);
-    // Create a data file
-    FileWriterFactory<Record> factoryForDataFile =
-        CustomFileWriterFactory.builderFor(table).build();
-    DataWriter<Record> dataFileWriter =
-        factoryForDataFile.newDataWriter(
-            EncryptedFiles.encryptedOutput(
-                getOutputFile(table, partitionRecord), EncryptionKeyMetadata.EMPTY),
-            table.spec(),
-            partitionRecord);
-    try (Closeable ignored = dataFileWriter) {
-      dataFileWriter.write(afterRecord);
-    }
-    DataFile dataFile = dataFileWriter.toDataFile();
-
-    // Create a delete file
-    int[] equalityFieldIds = {table.schema().findField("c2").fieldId()};
-    FileWriterFactory<Record> factoryForDeleteFile =
-        CustomFileWriterFactory.builderFor(table)
-            .equalityDeleteRowSchema(table.schema())
-            .equalityFieldIds(equalityFieldIds)
-            .build();
-    EqualityDeleteWriter<Record> deleteFileWriter =
-        factoryForDeleteFile.newEqualityDeleteWriter(
-            EncryptedFiles.encryptedOutput(
-                getOutputFile(table, partitionRecord), EncryptionKeyMetadata.EMPTY),
-            table.spec(),
-            partitionRecord);
-    try (Closeable ignored = deleteFileWriter) {
-      deleteFileWriter.write(beforeRecord);
-    }
-    DeleteFile deleteFile = deleteFileWriter.toDeleteFile();
-
-    table.newRowDelta().addDeletes(deleteFile).addRows(dataFile).commit();
-  }
-
-  private static <T> GenericRecord getPartitionRecord(
-      Table table, String partitionKey, T partitionValue) {
-    GenericRecord partitionRecord = GenericRecord.create(table.spec().partitionType());
-    partitionRecord.setField(partitionKey, partitionValue);
-    return partitionRecord;
-  }
-
-  private static OutputFile getOutputFile(Table table, GenericRecord partitionRecord) {
-    String filePath =
-        table
-            .locationProvider()
-            .newDataLocation(table.spec(), partitionRecord, UUID.randomUUID() + ".parquet");
-    return table.io().newOutputFile(filePath);
   }
 
   @NotNull
